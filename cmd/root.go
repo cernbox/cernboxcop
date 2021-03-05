@@ -167,6 +167,10 @@ func getEmailSender() string {
 	return viper.GetString("email_sender")
 }
 
+func getJwtSigningKey() string {
+	return viper.GetString("jwt-sign-key")
+}
+
 func check(err error) {
 	if err != nil {
 		//er(err)

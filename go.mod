@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/cs3org/reva v1.0.1-0.20200804150337-95e8788a1093
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/dustin/go-humanize v1.0.0
 	github.com/go-redis/redis v6.15.7+incompatible
 	github.com/go-sql-driver/mysql v1.5.0
@@ -17,6 +18,7 @@ require (
 	github.com/sirupsen/logrus v1.2.0
 	github.com/spf13/cobra v0.0.6
 	github.com/spf13/viper v1.6.2
+	github.com/studio-b12/gowebdav v0.0.0-20210203212356-8244b5a5f51a
 	github.com/tj/go-spin v1.1.0
 	go.etcd.io/bbolt v1.3.2
 	gopkg.in/ldap.v3 v3.1.0
