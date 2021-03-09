@@ -119,12 +119,14 @@ func storeInfo(p Probe) {
 // Generate a nice status message for al the probes
 func generateStatusMessage(listProbes []*Probe) string {
 	var info string = ""
+	degraded := false
 	for _, probe := range listProbes {
 		info += fmt.Sprintf("%s: service ", probe.Name)
 
 		if probe.IsSuccess {
 			info += "available\n"
 		} else {
+			degraded = true
 			info += "degraded. Failed on: "
 			failedNodes := probe.GetListNodesFailed()
 			for i, n := range failedNodes {
@@ -137,6 +139,9 @@ func generateStatusMessage(listProbes []*Probe) string {
 			}
 		}
 
+	}
+	if degraded {
+		info = fmt.Sprintf("EOS probe degraded at %s.\n\n%s", getCurrentTimeHumanReadable(), info)
 	}
 	return info
 }
@@ -278,12 +283,20 @@ func getDegradedDurationHumanReadable() string {
 	return duration.String()
 }
 
+func getCurrentTimeHumanReadable() string {
+	return time.Now().Format("2006-01-02 15:04:05")
+}
+
 func sendAvailableEmail() {
 	duration := getDegradedDurationHumanReadable()
 
-	headerBody := "Subject: EOS Probe: service available\r\n" +
-		"\r\n" +
-		"All services come back after " + duration + "."
+	headerBody := fmt.Sprintf(`Subject: EOS Probe: service available\r\n
+\r\n
+All services come back at %s after %s.`, getCurrentTimeHumanReadable(), duration)
+
+	// headerBody := "Subject: EOS Probe: service available\r\n" +
+	// 	"\r\n" +
+	// 	"All services come back at " + getCurrentTimeHumanReadable() + " after " + duration + "."
 	sendEmail(headerBody)
 }
 
