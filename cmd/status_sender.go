@@ -290,8 +290,8 @@ func getCurrentTimeHumanReadable() string {
 func sendAvailableEmail() {
 	duration := getDegradedDurationHumanReadable()
 
-	headerBody := fmt.Sprintf(`Subject: EOS Probe: service available\r\n
-\r\n
+	headerBody := fmt.Sprintf(`Subject: EOS Probe: service available
+
 All services come back at %s after %s.`, getCurrentTimeHumanReadable(), duration)
 
 	// headerBody := "Subject: EOS Probe: service available\r\n" +
