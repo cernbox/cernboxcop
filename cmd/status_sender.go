@@ -141,7 +141,7 @@ func generateStatusMessage(listProbes []*Probe) string {
 
 	}
 	if degraded {
-		info = fmt.Sprintf("EOS probe degraded at %s.\n\n%s", getCurrentTimeHumanReadable(), info)
+		info = fmt.Sprintf("Services degraded at %s.\n\n%s", getCurrentTimeHumanReadable(), info)
 	}
 	return info
 }
