@@ -4,7 +4,7 @@
 
 Name: cernboxcop
 Summary: CERNBox cop helps the ops team to be more efficient
-Version: 1.0.11
+Version: 1.0.12
 Release: 1%{?dist}
 License: AGPLv3
 BuildRoot: %{_tmppath}/%{name}-buildroot
@@ -51,6 +51,10 @@ rm -rf %buildroot/
 
 
 %changelog
+* Mon Mar 15 2021 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.12
+- Add option to stat EOS paths when listing project spaces
+- Change in accounting group resolver
+- Added impersonation commands
 * Tue Nov 25 2020 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.11
 - Add OTG commands
 * Fri Nov 20 2020 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.10
