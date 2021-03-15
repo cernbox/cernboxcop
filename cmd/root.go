@@ -135,6 +135,12 @@ func getEOSForUser(username string) *eosclient.Client {
 	return getEOS(mgm)
 }
 
+func getEOSForProject(prjname string) *eosclient.Client {
+	letter := string(prjname[0])
+	mgm := fmt.Sprintf("root://eosproject-%s.cern.ch", letter)
+	return getEOS(mgm)
+}
+
 func getProbeUser() (string, string) {
 	return viper.GetString("probe_username"), viper.GetString("probe_password")
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ func init() {
 	projectCmd.AddCommand(projectAddCmd)
 
 	projectListCmd.Flags().StringP("owner", "o", "", "filter by owner account")
+	projectListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
 }
 
 var projectCmd = &cobra.Command{
@@ -96,10 +98,15 @@ var projectListCmd = &cobra.Command{
 		owner, _ := cmd.Flags().GetString("owner")
 		projects := getProjectSpaces(owner)
 
-		cols := []string{"Name", "RelativePath", "Owner"}
+		cols := []string{"Name", "RelativePath", "Owner", "Path"}
 		rows := [][]string{}
+		printpath, _ := cmd.Flags().GetBool("printpath")
 		for i := range projects {
-			rows = append(rows, []string{projects[i].name, projects[i].rel, projects[i].owner})
+			row := []string{projects[i].name, projects[i].rel, projects[i].owner}
+			if printpath {
+				row = append(row, projects[i].GetPath())
+			}
+			rows = append(rows, row)
 		}
 		pretty(cols, rows)
 	},
@@ -263,3 +270,15 @@ func getProjectRelPath(nameOrPath string) string {
 }
 
 type projectSpace struct{ name, rel, owner string }
+
+func (p *projectSpace) GetPath() string {
+
+	fullPath := path.Join("/eos/project", p.rel)
+	client := getEOSForProject(p.name)
+	ctx := context.Background()
+	_, err := client.GetFileInfoByPath(ctx, "root", fullPath)
+	if err != nil {
+		return "NOT_FOUND"
+	}
+	return fullPath
+}
