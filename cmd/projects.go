@@ -193,7 +193,10 @@ var projectGetOwnerCmd = &cobra.Command{
 }
 
 func printProjectSpaces(projects []*projectSpace, printpath bool) {
-	cols := []string{"Name", "RelativePath", "Owner", "Path"}
+	cols := []string{"Name", "RelativePath", "Owner"}
+	if printpath {
+		cols = append(cols, "Path")
+	}
 	rows := [][]string{}
 	for _, project := range projects {
 		row := []string{project.name, project.rel, project.owner}
