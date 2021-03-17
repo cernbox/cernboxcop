@@ -4,7 +4,7 @@
 
 Name: cernboxcop
 Summary: CERNBox cop helps the ops team to be more efficient
-Version: 1.0.11
+Version: 1.0.12
 Release: 1%{?dist}
 License: AGPLv3
 BuildRoot: %{_tmppath}/%{name}-buildroot
@@ -51,6 +51,8 @@ rm -rf %buildroot/
 
 
 %changelog
+* Tue Feb 23 2021 Gianmaria Del Monte <gianmaria.del.monte@cern.ch> 1.0.12
+- Improved probe
 * Tue Nov 25 2020 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.11
 - Add OTG commands
 * Fri Nov 20 2020 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.10
