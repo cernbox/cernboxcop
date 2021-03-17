@@ -20,6 +20,7 @@ func init() {
 	projectCmd.AddCommand(projectOrphanCmd)
 
 	projectListCmd.Flags().StringP("owner", "o", "", "filter by owner account")
+	projectOrphanCmd.Flags().BoolP("quiet", "q", false, "Only show projects name")
 }
 
 var projectCmd = &cobra.Command{
@@ -75,6 +76,11 @@ var projectOrphanCmd = &cobra.Command{
 	Short: "List only the projects which are in the DB but not in EOS",
 	Run: func(cmd *cobra.Command, args []string) {
 
+		quiet, err := cmd.Flags().GetBool("quiet")
+		if err != nil {
+			er(err)
+		}
+
 		cacheInitials := make(map[string]bool)
 		cacheProjectsName := make(map[string]bool)
 
@@ -102,7 +108,14 @@ var projectOrphanCmd = &cobra.Command{
 		}
 
 		orphanSpaces := getProjectsFiltered(filterOrphan)
-		printProjectSpaces(orphanSpaces)
+
+		if quiet {
+			for _, orphan := range orphanSpaces {
+				fmt.Println(orphan.name)
+			}
+		} else {
+			printProjectSpaces(orphanSpaces)
+		}
 	},
 }
 
