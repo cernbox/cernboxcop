@@ -27,6 +27,7 @@ var instance *bolt.DB
 var once sync.Once
 
 const failedProbesBucket = "FailedProbes"
+const firstEmailDegradedBucket = "FirstEmail"
 
 type failedProbe struct {
 	Nodes []string
@@ -118,12 +119,14 @@ func storeInfo(p Probe) {
 // Generate a nice status message for al the probes
 func generateStatusMessage(listProbes []*Probe) string {
 	var info string = ""
+	degraded := false
 	for _, probe := range listProbes {
 		info += fmt.Sprintf("%s: service ", probe.Name)
 
 		if probe.IsSuccess {
 			info += "available\n"
 		} else {
+			degraded = true
 			info += "degraded. Failed on: "
 			failedNodes := probe.GetListNodesFailed()
 			for i, n := range failedNodes {
@@ -137,6 +140,9 @@ func generateStatusMessage(listProbes []*Probe) string {
 		}
 
 	}
+	if degraded {
+		info = fmt.Sprintf("Services degraded at %s.\n\n%s", getCurrentTimeHumanReadable(), info)
+	}
 	return info
 }
 
@@ -147,6 +153,53 @@ func getStatus(listProbes []*Probe) string {
 		}
 	}
 	return "available"
+}
+
+func firstEmailDegradedSent() bool {
+	ret := true
+	getInstance().Batch(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(firstEmailDegradedBucket))
+
+		if bucket == nil {
+			ret = false
+		}
+		return nil
+	})
+	return ret
+}
+
+func setFirstEmailSent() {
+	getInstance().Batch(func(tx *bolt.Tx) error {
+		tx.CreateBucketIfNotExists([]byte(firstEmailDegradedBucket))
+
+		bucket := tx.Bucket([]byte(firstEmailDegradedBucket))
+		now, err := json.Marshal(time.Now())
+
+		if err != nil {
+			return err
+		}
+
+		return bucket.Put([]byte("time"), now)
+	})
+}
+
+func allSuccessfulProbe(listProbes []*Probe) bool {
+	for _, probe := range listProbes {
+		if !probe.IsSuccess {
+			return false
+		}
+	}
+	return true
+}
+
+func setAllAvailable(listProbes []*Probe) {
+	getInstance().Batch(func(tx *bolt.Tx) error {
+		tx.DeleteBucket([]byte(firstEmailDegradedBucket))
+		return nil
+	})
+	for _, probe := range listProbes {
+		removeStatus(probe.Name)
+	}
 }
 
 // SendStatus sends always the status to the CERN monitoring service (both if the service is "degraded" and "available")
@@ -161,6 +214,17 @@ func SendStatus(listProbes []*Probe) {
 	if verbose {
 		fmt.Printf("Sending Metric Status:\n\n%s, info: %s\n", status, info)
 	}
+
+	// if all probes are successful and previously the service was degraded,
+	// send a successful email
+
+	if allSuccessfulProbe(listProbes) && firstEmailDegradedSent() {
+		sendAvailableEmail()
+		setAllAvailable(listProbes)
+		return
+	}
+
+	// maybe there is a failed probe
 
 	// send email only if not already sent in a previous run
 	sendEmail := false
@@ -184,7 +248,10 @@ func SendStatus(listProbes []*Probe) {
 		for _, p := range listProbes {
 			storeInfo(*p)
 		}
-		sendStatusEmail(info)
+		if !firstEmailDegradedSent() {
+			setFirstEmailSent()
+		}
+		sendDegradedEmail(info)
 
 	} else {
 		if verbose {
@@ -193,8 +260,57 @@ func SendStatus(listProbes []*Probe) {
 	}
 }
 
+func getDegradedDuration() time.Duration {
+	var duration time.Duration
+	getInstance().Batch(func(tx *bolt.Tx) error {
+
+		bucket := tx.Bucket([]byte(firstEmailDegradedBucket))
+		timeByte := bucket.Get([]byte("time"))
+
+		var t time.Time
+
+		json.Unmarshal(timeByte, &t)
+
+		duration = time.Now().Sub(t)
+		return nil
+
+	})
+	return duration
+}
+
+func getDegradedDurationHumanReadable() string {
+	duration := getDegradedDuration()
+	return duration.String()
+}
+
+func getCurrentTimeHumanReadable() string {
+	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+func sendAvailableEmail() {
+	duration := getDegradedDurationHumanReadable()
+
+	headerBody := fmt.Sprintf(`Subject: EOS Probe: service available
+
+All services come back at %s after %s.`, getCurrentTimeHumanReadable(), duration)
+
+	// headerBody := "Subject: EOS Probe: service available\r\n" +
+	// 	"\r\n" +
+	// 	"All services come back at " + getCurrentTimeHumanReadable() + " after " + duration + "."
+	sendEmail(headerBody)
+}
+
 // sendStatusEmail sends the status email to all emails specified in the config file
-func sendStatusEmail(message string) {
+func sendDegradedEmail(message string) {
+	headerBody := "Subject: EOS Probe: service degraded\r\n" +
+		"\r\n" +
+		message
+
+	sendEmail(headerBody)
+
+}
+
+func sendEmail(message string) {
 	user, password := getEmailCredentials()
 	from := getEmailSender()
 	to := getEmails()
@@ -204,12 +320,7 @@ func sendStatusEmail(message string) {
 
 	auth := smtp.PlainAuth("", user, password, smtpHost)
 
-	headerBody := "Subject: EOS Probe: service degraded\r\n" +
-		"\r\n" +
-		message
-
-	// Sending email.
-	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, []byte(headerBody))
+	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, []byte(message))
 	if err != nil {
 		fmt.Println(err)
 		return

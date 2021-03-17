@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spf13/cobra"
+	"os/exec"
 	"path"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 func init() {
@@ -16,9 +18,13 @@ func init() {
 	projectCmd.AddCommand(projectUpdateSvcAccount)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectAddCmd)
+	projectCmd.AddCommand(projectOrphanCmd)
 
 	projectListCmd.Flags().StringP("owner", "o", "", "filter by owner account")
+	projectOrphanCmd.Flags().BoolP("quiet", "q", false, "Only show projects name")
 	projectListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
+	projectOrphanCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
+
 }
 
 var projectCmd = &cobra.Command{
@@ -67,6 +73,61 @@ var projectDeleteCmd = &cobra.Command{
 			er(err)
 		}
 	},
+}
+
+var projectOrphanCmd = &cobra.Command{
+	Use:   "orphan",
+	Short: "List only the projects which are in the DB but not in EOS",
+	Run: func(cmd *cobra.Command, args []string) {
+
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		printpath, _ := cmd.Flags().GetBool("printpath")
+
+		cacheInitials := make(map[string]bool)
+		cacheProjectsName := make(map[string]bool)
+
+		filterOrphan := func(pSpace *projectSpace) bool {
+			splitted := strings.SplitN(pSpace.rel, "/", 2) // splitted = [<initial letter> <project name>]
+			initialLetter := splitted[0]
+			projectName := splitted[1]
+
+			if !cacheInitials[initialLetter] {
+				// not in cache
+				// i should retrieve all project starting with the initial letter from EOS
+				mgm := fmt.Sprintf("root://eosproject-%s.cern.ch", initialLetter)
+				path := fmt.Sprintf("/eos/project/%s", initialLetter)
+
+				files := getFilesInDirEOS(mgm, path)
+
+				// put in cache
+				cacheInitials[initialLetter] = true
+				for _, file := range files {
+					cacheProjectsName[file] = true
+				}
+			}
+			return !cacheProjectsName[projectName]
+
+		}
+
+		orphanSpaces := getProjectsFiltered(filterOrphan)
+
+		if quiet {
+			for _, orphan := range orphanSpaces {
+				fmt.Println(orphan.name)
+			}
+		} else {
+			printProjectSpaces(orphanSpaces, printpath)
+		}
+	},
+}
+
+func getFilesInDirEOS(mgm, pathDir string) []string {
+	cmd := exec.Command("eos", mgm, "ls", pathDir)
+	out, err := cmd.Output()
+	if err != nil {
+		er(err)
+	}
+	return strings.Split(string(out), "\n")
 }
 
 var projectUpdateSvcAccount = &cobra.Command{
@@ -131,6 +192,22 @@ var projectGetOwnerCmd = &cobra.Command{
 	},
 }
 
+func printProjectSpaces(projects []*projectSpace, printpath bool) {
+	cols := []string{"Name", "RelativePath", "Owner"}
+	if printpath {
+		cols = append(cols, "Path")
+	}
+	rows := [][]string{}
+	for _, project := range projects {
+		row := []string{project.name, project.rel, project.owner}
+		if printpath {
+			row = append(row, project.GetPath())
+		}
+		rows = append(rows, row)
+	}
+	pretty(cols, rows)
+}
+
 var addProject = func(name, owner string) error {
 	db := getDB()
 
@@ -152,6 +229,34 @@ var addProject = func(name, owner string) error {
 	}
 	return nil
 
+}
+
+func getProjectsFiltered(filter func(*projectSpace) bool) (projects []*projectSpace) {
+	db := getDB()
+
+	query := "SELECT project_name, eos_relative_path, project_owner FROM cernbox_project_mapping"
+	rows, err := db.Query(query)
+	if err != nil {
+		er(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		pSpace := new(projectSpace)
+		err = rows.Scan(&pSpace.name, &pSpace.rel, &pSpace.owner)
+		if err != nil {
+			er(err)
+		}
+		if filter(pSpace) {
+			projects = append(projects, pSpace)
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		er(err)
+	}
+
+	return
 }
 
 func deleteProject(project *projectSpace) error {
