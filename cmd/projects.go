@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/spf13/cobra"
+	"os/exec"
 	"path"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 func init() {
@@ -16,9 +18,13 @@ func init() {
 	projectCmd.AddCommand(projectUpdateSvcAccount)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectAddCmd)
+	projectCmd.AddCommand(projectOrphanCmd)
 
 	projectListCmd.Flags().StringP("owner", "o", "", "filter by owner account")
+	projectOrphanCmd.Flags().BoolP("quiet", "q", false, "Only show projects name")
 	projectListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
+	projectOrphanCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
+
 }
 
 var projectCmd = &cobra.Command{
@@ -69,6 +75,66 @@ var projectDeleteCmd = &cobra.Command{
 	},
 }
 
+type FilterProject interface {
+	In(*projectSpace) bool
+}
+
+type ByOrphan struct{}
+
+var cacheInitials map[string]bool = make(map[string]bool)
+var cacheProjectsName map[string]bool = make(map[string]bool)
+
+func (ByOrphan) In(pSpace *projectSpace) bool {
+	splitted := strings.SplitN(pSpace.rel, "/", 2) // splitted = [<initial letter> <project name>]
+	initialLetter := splitted[0]
+	projectName := splitted[1]
+
+	if !cacheInitials[initialLetter] {
+		// not in cache
+		// i should retrieve all project starting with the initial letter from EOS
+		mgm := fmt.Sprintf("root://eosproject-%s.cern.ch", initialLetter)
+		path := fmt.Sprintf("/eos/project/%s", initialLetter)
+
+		files := getFilesInDirEOS(mgm, path)
+
+		// put in cache
+		cacheInitials[initialLetter] = true
+		for _, file := range files {
+			cacheProjectsName[file] = true
+		}
+	}
+	return !cacheProjectsName[projectName]
+}
+
+var projectOrphanCmd = &cobra.Command{
+	Use:   "orphan",
+	Short: "List only the projects which are in the DB but not in EOS",
+	Run: func(cmd *cobra.Command, args []string) {
+
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		printpath, _ := cmd.Flags().GetBool("printpath")
+
+		orphanSpaces := getProjects(ByOrphan{})
+
+		if quiet {
+			for _, orphan := range orphanSpaces {
+				fmt.Println(orphan.name)
+			}
+		} else {
+			printProjectSpaces(orphanSpaces, printpath)
+		}
+	},
+}
+
+func getFilesInDirEOS(mgm, pathDir string) []string {
+	cmd := exec.Command("eos", mgm, "ls", pathDir)
+	out, err := cmd.Output()
+	if err != nil {
+		er(err)
+	}
+	return strings.Split(string(out), "\n")
+}
+
 var projectUpdateSvcAccount = &cobra.Command{
 	Use:   "update-svc-account <project-name> <svc-account>",
 	Short: "Update the ownership of a project space (in db only)",
@@ -91,24 +157,21 @@ var projectUpdateSvcAccount = &cobra.Command{
 	},
 }
 
+type ByOwner string
+
+func (owner ByOwner) In(pSpace *projectSpace) bool {
+	return string(owner) == pSpace.owner
+}
+
 var projectListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all project spaces",
 	Run: func(cmd *cobra.Command, args []string) {
 		owner, _ := cmd.Flags().GetString("owner")
-		projects := getProjectSpaces(owner)
-
-		cols := []string{"Name", "RelativePath", "Owner", "Path"}
-		rows := [][]string{}
 		printpath, _ := cmd.Flags().GetBool("printpath")
-		for i := range projects {
-			row := []string{projects[i].name, projects[i].rel, projects[i].owner}
-			if printpath {
-				row = append(row, projects[i].GetPath())
-			}
-			rows = append(rows, row)
-		}
-		pretty(cols, rows)
+
+		projects := getProjects(ByOwner(owner))
+		printProjectSpaces(projects, printpath)
 	},
 }
 
@@ -129,6 +192,22 @@ var projectGetOwnerCmd = &cobra.Command{
 
 		fmt.Println(owner)
 	},
+}
+
+func printProjectSpaces(projects []*projectSpace, printpath bool) {
+	cols := []string{"Name", "RelativePath", "Owner"}
+	if printpath {
+		cols = append(cols, "Path")
+	}
+	rows := [][]string{}
+	for _, project := range projects {
+		row := []string{project.name, project.rel, project.owner}
+		if printpath {
+			row = append(row, project.GetPath())
+		}
+		rows = append(rows, row)
+	}
+	pretty(cols, rows)
 }
 
 var addProject = func(name, owner string) error {
@@ -152,6 +231,34 @@ var addProject = func(name, owner string) error {
 	}
 	return nil
 
+}
+
+func getProjects(filter FilterProject) (projects []*projectSpace) {
+	db := getDB()
+
+	query := "SELECT project_name, eos_relative_path, project_owner FROM cernbox_project_mapping"
+	rows, err := db.Query(query)
+	if err != nil {
+		er(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		pSpace := new(projectSpace)
+		err = rows.Scan(&pSpace.name, &pSpace.rel, &pSpace.owner)
+		if err != nil {
+			er(err)
+		}
+		if filter.In(pSpace) {
+			projects = append(projects, pSpace)
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		er(err)
+	}
+
+	return
 }
 
 func deleteProject(project *projectSpace) error {
@@ -191,40 +298,15 @@ func updateProjectServiceAccount(project *projectSpace, newOwner string) error {
 	return nil
 }
 
-func getProjectSpaces(ownerFilter string) (projects []*projectSpace) {
-	db := getDB()
+type All struct{}
 
-	query := "SELECT project_name, eos_relative_path, project_owner FROM cernbox_project_mapping"
-	rows, err := db.Query(query)
-	if err != nil {
-		er(err)
-	}
-	defer rows.Close()
-
-	var name, relpath, owner string
-	for rows.Next() {
-		err := rows.Scan(&name, &relpath, &owner)
-		if err != nil {
-			er(err)
-		}
-
-		if ownerFilter == "" || ownerFilter == owner {
-			proj := &projectSpace{name: name, rel: relpath, owner: owner}
-			projects = append(projects, proj)
-		}
-	}
-
-	err = rows.Err()
-	if err != nil {
-		er(err)
-	}
-
-	return
+func (All) In(*projectSpace) bool {
+	return true
 }
 
 func getProjectOwner(nameOrPath string) (string, error) {
 	relpath := getProjectRelPath(nameOrPath)
-	projects := getProjectSpaces("")
+	projects := getProjects(All{})
 	for i := range projects {
 		if projects[i].rel == relpath {
 			return projects[i].owner, nil
@@ -243,7 +325,7 @@ func getProjectOwner(nameOrPath string) (string, error) {
 
 func getProject(nameOrPath string) (*projectSpace, error) {
 	relpath := getProjectRelPath(nameOrPath)
-	projects := getProjectSpaces("")
+	projects := getProjects(All{})
 	for i := range projects {
 		if projects[i].rel == relpath {
 			return projects[i], nil
