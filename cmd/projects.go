@@ -23,6 +23,7 @@ func init() {
 	projectListCmd.Flags().StringP("owner", "o", "", "filter by owner account")
 	projectOrphanCmd.Flags().BoolP("quiet", "q", false, "Only show projects name")
 	projectListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
+	projectOrphanCmd.Flags().BoolP("printpath", "", false, "print EOS path, it may take a while to run")
 
 }
 
@@ -79,10 +80,8 @@ var projectOrphanCmd = &cobra.Command{
 	Short: "List only the projects which are in the DB but not in EOS",
 	Run: func(cmd *cobra.Command, args []string) {
 
-		quiet, err := cmd.Flags().GetBool("quiet")
-		if err != nil {
-			er(err)
-		}
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		printpath, _ := cmd.Flags().GetBool("printpath")
 
 		cacheInitials := make(map[string]bool)
 		cacheProjectsName := make(map[string]bool)
@@ -117,7 +116,7 @@ var projectOrphanCmd = &cobra.Command{
 				fmt.Println(orphan.name)
 			}
 		} else {
-			printProjectSpaces(orphanSpaces)
+			printProjectSpaces(orphanSpaces, printpath)
 		}
 	},
 }
@@ -193,11 +192,15 @@ var projectGetOwnerCmd = &cobra.Command{
 	},
 }
 
-func printProjectSpaces(projects []*projectSpace) {
-	cols := []string{"Name", "RelativePath", "Owner"}
+func printProjectSpaces(projects []*projectSpace, printpath bool) {
+	cols := []string{"Name", "RelativePath", "Owner", "Path"}
 	rows := [][]string{}
 	for _, project := range projects {
-		rows = append(rows, []string{project.name, project.rel, project.owner})
+		row := []string{project.name, project.rel, project.owner}
+		if printpath {
+			row = append(row, project.GetPath())
+		}
+		rows = append(rows, row)
 	}
 	pretty(cols, rows)
 }
