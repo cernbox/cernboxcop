@@ -12,8 +12,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const MAXIMUM_PARALLEL_JOBS = 100
-
 func init() {
 	rootCmd.AddCommand(shareCmd)
 
@@ -27,6 +25,7 @@ func init() {
 	shareListCmd.Flags().StringP("path", "p", "", "filter by eos path")
 	shareListCmd.Flags().BoolP("all", "a", false, "shows all shares")
 	shareListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it can be expensive depending on number of shares")
+	shareListCmd.Flags().IntP("concurrency", "", 100, "use up to <n> concurrent connections to resolve paths")
 
 	shareTransferCmd.Flags().BoolP("yes", "y", false, "confirms transfership of ownership without confirmation")
 }
@@ -121,50 +120,8 @@ var shareListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all the shares",
 	Run: func(cmd *cobra.Command, args []string) {
-		print := func(shares []*dbShare) {
-			printpath, _ := cmd.Flags().GetBool("printpath")
-			cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
-			rows := [][]string{}
-
-			c := make(chan []string) // collect generated rows
-			var wg sync.WaitGroup
-			var parallelJobs int
-
-			if printpath {
-				parallelJobs = MAXIMUM_PARALLEL_JOBS
-			} else {
-				parallelJobs = 1
-			}
-
-			// used to limit the number of concurrent goroutines
-			limit := make(chan struct{}, parallelJobs)
-
-			// get new row and append to rows list
-			go func(c <-chan []string) {
-				for row := range c {
-					rows = append(rows, row)
-					wg.Done()
-				}
-			}(c)
-
-			// populate rows list
-			for _, share := range shares {
-				wg.Add(1)
-				limit <- struct{}{}
-				go func(s *dbShare, c chan<- []string) {
-					defer func() { <-limit }()
-					row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
-					if printpath {
-						row = append(row, s.GetPath())
-					}
-					c <- row
-				}(share, c)
-			}
-
-			wg.Wait()
-			close(c)
-			pretty(cols, rows)
-		}
+		printpath, _ := cmd.Flags().GetBool("printpath")
+		concurrency, _ := cmd.Flags().GetInt("concurrency")
 
 		owner, _ := cmd.Flags().GetString("owner")
 		owner = strings.TrimSpace(owner)
@@ -173,7 +130,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares)
+			print(shares, printpath, concurrency)
 		}
 
 		id, _ := cmd.Flags().GetString("id")
@@ -183,7 +140,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares)
+			print(shares, printpath, concurrency)
 		}
 
 		with, _ := cmd.Flags().GetString("share-with")
@@ -193,7 +150,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares)
+			print(shares, printpath, concurrency)
 		}
 
 		token, _ := cmd.Flags().GetString("token")
@@ -203,7 +160,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares)
+			print(shares, printpath, concurrency)
 		}
 
 		all, _ := cmd.Flags().GetBool("all")
@@ -212,11 +169,50 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares)
-
+			print(shares, printpath, concurrency)
 		}
 
 	},
+}
+
+func print(shares []*dbShare, printpath bool, concurrency int) {
+	cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
+	rows := [][]string{}
+	if !printpath {
+		concurrency = 1           // don't use concurrency if we don't resolve paths
+		cols = cols[:len(cols)-1] // remove "PATH" column
+	}
+
+	var wg sync.WaitGroup
+	limit := make(chan struct{}, concurrency) // used to limit the number of concurrent goroutines
+	c := make(chan []string)                  // collect generated rows
+
+	// get new row and append to rows list
+	go func(c <-chan []string) {
+		for row := range c {
+			rows = append(rows, row)
+			wg.Done()
+		}
+	}(c)
+
+	// populate rows list
+	for _, share := range shares {
+		wg.Add(1)
+		limit <- struct{}{}
+		go func(s *dbShare, c chan<- []string) {
+			defer func() { <-limit }()
+			row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
+			if printpath {
+				row = append(row, s.GetPath())
+			}
+			c <- row
+		}(share, c)
+	}
+
+	wg.Wait()
+	close(c)
+	pretty(cols, rows)
+
 }
 
 type dbShare struct {
@@ -301,15 +297,7 @@ func (s *dbShare) GetPath() string {
 	if err != nil {
 		er(err)
 	}
-	//Convert the body to type string
-	sb := string(body)
-
-	// mgm := fmt.Sprintf("root://%s.cern.ch", s.Prefix)
-
-	// client := getEOS(mgm)
-	// ctx := context.Background()
-	// fi, err := client.GetFileInfoByInode(ctx, "root", inode)
-	sb = strings.TrimSpace(sb)
+	sb := strings.TrimSpace(string(body))
 	if sb == "" {
 		return "-"
 	}
