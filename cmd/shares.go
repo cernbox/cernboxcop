@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tj/go-spin"
@@ -187,17 +188,28 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	}
 
 	var wg sync.WaitGroup
-	var mutexStatus sync.WaitGroup
 	limit := make(chan struct{}, concurrency) // used to limit the number of concurrent goroutines
 	c := make(chan []string)                  // collect generated rows
-	var nPaths int                            // number of paths resolved
 	nShares := len(shares)
-	spinner := spin.New()
+	nPaths := 0
+
+	if status {
+		t := time.NewTicker(500 * time.Millisecond)
+		defer t.Stop()
+
+		go func() {
+			s := spin.New()
+			for range t.C {
+				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Next(), nPaths, nShares)
+			}
+		}()
+	}
 
 	// get new row and append to rows list
 	go func(c <-chan []string) {
 		for row := range c {
 			rows = append(rows, row)
+			nPaths++
 			wg.Done()
 		}
 	}(c)
@@ -211,12 +223,6 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 			row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
 			if printpath {
 				row = append(row, s.GetPath())
-			}
-			if status {
-				mutexStatus.Add(1)
-				defer mutexStatus.Done()
-				nPaths++
-				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", spinner.Next(), nPaths, nShares)
 			}
 			c <- row
 		}(share, c)
