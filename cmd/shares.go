@@ -192,15 +192,12 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	c := make(chan []string)                  // collect generated rows
 	nShares := len(shares)
 	nPaths := 0
+	s := spin.New()
 
 	if status {
-		t := time.NewTicker(500 * time.Millisecond)
-		defer t.Stop()
-
 		go func() {
-			s := spin.New()
-			for range t.C {
-				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Next(), nPaths, nShares)
+			for range time.Tick(100 * time.Millisecond) {
+				s.Next()
 			}
 		}()
 	}
@@ -209,7 +206,10 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	go func(c <-chan []string) {
 		for row := range c {
 			rows = append(rows, row)
-			nPaths++
+			if status {
+				nPaths++
+				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Current(), nPaths, nShares)
+			}
 			wg.Done()
 		}
 	}(c)
