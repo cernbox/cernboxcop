@@ -179,6 +179,10 @@ var shareListCmd = &cobra.Command{
 	},
 }
 
+func updateStatus(s *spin.Spinner, i, l int) {
+	fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Current(), i, l)
+}
+
 func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
 	rows := [][]string{}
@@ -198,6 +202,7 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 		go func() {
 			for range time.Tick(100 * time.Millisecond) {
 				s.Next()
+				updateStatus(s, nPaths, nShares)
 			}
 		}()
 	}
@@ -208,7 +213,7 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 			rows = append(rows, row)
 			if status {
 				nPaths++
-				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Current(), nPaths, nShares)
+				updateStatus(s, nPaths, nShares)
 			}
 			wg.Done()
 		}
