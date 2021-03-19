@@ -1,13 +1,18 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"github.com/spf13/cobra"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/spf13/cobra"
 )
+
+const MAXIMUM_PARALLEL_JOBS = 100
 
 func init() {
 	rootCmd.AddCommand(shareCmd)
@@ -120,15 +125,45 @@ var shareListCmd = &cobra.Command{
 			printpath, _ := cmd.Flags().GetBool("printpath")
 			cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
 			rows := [][]string{}
-			for _, s := range shares {
-				row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
-				if printpath {
-					row = append(row, s.GetPath())
-				}
-				rows = append(rows, row)
+
+			c := make(chan []string) // collect generated rows
+			var wg sync.WaitGroup
+			var parallelJobs int
+
+			if printpath {
+				parallelJobs = MAXIMUM_PARALLEL_JOBS
+			} else {
+				parallelJobs = 1
 			}
+
+			// used to limit the number of concurrent goroutines
+			limit := make(chan struct{}, parallelJobs)
+
+			// get new row and append to rows list
+			go func(c <-chan []string) {
+				for row := range c {
+					rows = append(rows, row)
+					wg.Done()
+				}
+			}(c)
+
+			// populate rows list
+			for _, share := range shares {
+				wg.Add(1)
+				limit <- struct{}{}
+				go func(s *dbShare, c chan<- []string) {
+					defer func() { <-limit }()
+					row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
+					if printpath {
+						row = append(row, s.GetPath())
+					}
+					c <- row
+				}(share, c)
+			}
+
+			wg.Wait()
+			close(c)
 			pretty(cols, rows)
-			os.Exit(0)
 		}
 
 		owner, _ := cmd.Flags().GetString("owner")
@@ -246,15 +281,39 @@ func (s *dbShare) GetPath() string {
 		er(err)
 	}
 
-	mgm := fmt.Sprintf("root://%s.cern.ch", s.Prefix)
+	mgm := fmt.Sprintf("%s.cern.ch", s.Prefix)
 	mgm = strings.ReplaceAll(mgm, "new", "eos")
-	client := getEOS(mgm)
-	ctx := context.Background()
-	fi, err := client.GetFileInfoByInode(ctx, "root", inode)
+	req := fmt.Sprintf("http://%s:8000/proc/user/?mgm.cmd=fileinfo&mgm.path=inode:%d&mgm.file.info.option=--path&mgm.format=fuse", mgm, inode)
+
+	resp, err := http.Get(req)
 	if err != nil {
 		return "-"
 	}
-	return fi.File
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		// i'll retry
+		// TODO: limit number of retries
+		return s.GetPath()
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		er(err)
+	}
+	//Convert the body to type string
+	sb := string(body)
+
+	// mgm := fmt.Sprintf("root://%s.cern.ch", s.Prefix)
+
+	// client := getEOS(mgm)
+	// ctx := context.Background()
+	// fi, err := client.GetFileInfoByInode(ctx, "root", inode)
+	sb = strings.TrimSpace(sb)
+	if sb == "" {
+		return "-"
+	}
+	return sb[8:]
 }
 
 func getSharesByToken(token string) (shares []*dbShare, err error) {
