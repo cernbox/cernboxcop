@@ -216,7 +216,7 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 				mutexStatus.Add(1)
 				defer mutexStatus.Done()
 				nPaths++
-				fmt.Fprintf(os.Stderr, "\r %s Getting account info [%d/%d]", spinner.Next(), nPaths, nShares)
+				fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", spinner.Next(), nPaths, nShares)
 			}
 			c <- row
 		}(share, c)
