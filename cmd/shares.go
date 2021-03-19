@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+	"github.com/tj/go-spin"
 )
 
 func init() {
@@ -26,6 +27,7 @@ func init() {
 	shareListCmd.Flags().BoolP("all", "a", false, "shows all shares")
 	shareListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it can be expensive depending on number of shares")
 	shareListCmd.Flags().IntP("concurrency", "", 100, "use up to <n> concurrent connections to resolve paths")
+	shareListCmd.Flags().BoolP("status", "", false, "shows the status when it is resolving EOS paths")
 
 	shareTransferCmd.Flags().BoolP("yes", "y", false, "confirms transfership of ownership without confirmation")
 }
@@ -122,6 +124,7 @@ var shareListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		printpath, _ := cmd.Flags().GetBool("printpath")
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
+		status, _ := cmd.Flags().GetBool("status")
 
 		owner, _ := cmd.Flags().GetString("owner")
 		owner = strings.TrimSpace(owner)
@@ -130,7 +133,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares, printpath, concurrency)
+			print(shares, printpath, concurrency, status)
 		}
 
 		id, _ := cmd.Flags().GetString("id")
@@ -140,7 +143,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares, printpath, concurrency)
+			print(shares, printpath, concurrency, status)
 		}
 
 		with, _ := cmd.Flags().GetString("share-with")
@@ -150,7 +153,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares, printpath, concurrency)
+			print(shares, printpath, concurrency, status)
 		}
 
 		token, _ := cmd.Flags().GetString("token")
@@ -160,7 +163,7 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares, printpath, concurrency)
+			print(shares, printpath, concurrency, status)
 		}
 
 		all, _ := cmd.Flags().GetBool("all")
@@ -169,13 +172,13 @@ var shareListCmd = &cobra.Command{
 			if err != nil {
 				er(err)
 			}
-			print(shares, printpath, concurrency)
+			print(shares, printpath, concurrency, status)
 		}
 
 	},
 }
 
-func print(shares []*dbShare, printpath bool, concurrency int) {
+func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
 	rows := [][]string{}
 	if !printpath {
@@ -184,8 +187,12 @@ func print(shares []*dbShare, printpath bool, concurrency int) {
 	}
 
 	var wg sync.WaitGroup
+	var mutexStatus sync.WaitGroup
 	limit := make(chan struct{}, concurrency) // used to limit the number of concurrent goroutines
 	c := make(chan []string)                  // collect generated rows
+	var nPaths int                            // number of paths resolved
+	nShares := len(shares)
+	spinner := spin.New()
 
 	// get new row and append to rows list
 	go func(c <-chan []string) {
@@ -204,6 +211,12 @@ func print(shares []*dbShare, printpath bool, concurrency int) {
 			row := []string{fmt.Sprintf("%d", s.ID), s.FileID(), s.UIDOwner, s.HumanType(), s.HumanShareWith(), s.HumanPerm(), s.PublicLink()}
 			if printpath {
 				row = append(row, s.GetPath())
+			}
+			if status {
+				mutexStatus.Add(1)
+				defer mutexStatus.Done()
+				nPaths++
+				fmt.Fprintf(os.Stderr, "\r %s Getting account info [%d/%d]", spinner.Next(), nPaths, nShares)
 			}
 			c <- row
 		}(share, c)
