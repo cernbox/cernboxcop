@@ -4,14 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cs3org/reva/pkg/eosclient"
-	"github.com/dustin/go-humanize"
-	"github.com/leekchan/accounting"
-	"github.com/mitchellh/mapstructure"
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"github.com/tj/go-spin"
-	"gopkg.in/ldap.v3"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -21,8 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/cs3org/reva/pkg/eosclient"
+	"github.com/dustin/go-humanize"
+	"github.com/leekchan/accounting"
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/tj/go-spin"
+	"gopkg.in/ldap.v3"
 )
 
 const FE = "CERNBox"
@@ -81,7 +81,7 @@ var accountingReportCmd = &cobra.Command{
 
 		charge, _ := cmd.Flags().GetBool("charging")
 		if charge {
-			charges := getCharging(infos, conc)
+			charges := getCharging(infos)
 			fillCharging(infos, charges)
 			fillChargeRoles(infos)
 			infos = cleanInfos(infos, showInvalid)
@@ -637,96 +637,41 @@ var getInstances = func(infos []*projectInfo) []string {
 
 }
 
-var getCharging = func(infos []*projectInfo, concurrency int) map[string]*chargeInfo {
-	// obtain list of usernames
-	// and send them in a big JSON document
-	accounts := make([]string, 0, len(infos))
-	for _, v := range infos {
-		accounts = append(accounts, v.userInfo.Account)
+var getCharging = func(infos []*projectInfo) (charges map[string]*chargeInfo) {
+	url := "https://gar.cern.ch/public/user_resolver/list_all"
+
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error GETing account receiver: %+v", err)
+		er(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		er(fmt.Sprintf("error GETing account received, HTTP error code: %+v", resp.StatusCode))
 	}
 
-	// chunk requests so we don't get gateway timeouts
-	chunks := [][]string{}
-	chunkSize := 1000
-	for i := 0; i < len(accounts); i += chunkSize {
-		end := i + chunkSize
+	cr := chargeResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+		log.Error().Msgf("error parsing account receiver: %+v", err)
+		er(err)
+	}
 
-		if end > len(accounts) {
-			end = len(accounts)
+	// fmt.Fprintf(os.Stderr, "\r %s Resolving charging information [%d/%d]", s.Next(), counter, totalAccounts)
+	for k, v := range cr {
+
+		ci := &chargeInfo{}
+		if err := mapstructure.Decode(v, ci); err != nil {
+			log.Error().Msgf("error decoding: account:%s value:%s", k, v)
+			continue
 		}
-
-		chunks = append(chunks, accounts[i:end])
+		// validate input
+		// TODO(labkode): report that the API returns charge type with whitespaces at the beggining.
+		ci.Type = strings.TrimSpace(ci.Type)
+		ci.ChargeGroup = strings.TrimSpace(ci.ChargeGroup)
+		charges[k] = ci
 	}
 
-	charges := map[string]*chargeInfo{}
-	mux := sync.Mutex{}
-
-	var throttle = make(chan int, 1)
-	var wg sync.WaitGroup
-	url := "https://gar.cern.ch/user_resolver/batch_resolve/"
-	s := spin.New()
-	counter := uint64(0)
-	totalAccounts := len(accounts)
-	for _, accounts := range chunks {
-		throttle <- 1 // whatever number
-		wg.Add(1)
-		go func(accounts []string, wg *sync.WaitGroup, throttle chan int) {
-			client := &http.Client{}
-			atomic.AddUint64(&counter, uint64(len(accounts)))
-			defer wg.Done()
-			defer func() {
-				<-throttle
-			}()
-			ch := &chargeJSON{Users: accounts}
-			body, err := json.Marshal(ch)
-			if err != nil {
-				er(err)
-			}
-
-			req, err := http.NewRequest("GET", url, strings.NewReader(string(body)))
-			req.Header.Set("Content-Type", "application/json")
-			resp, err := client.Do(req)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error GETing account receiver: %+v", err)
-				er(err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				er(fmt.Sprintf("error GETing account received, HTTP error code: %+v", resp.StatusCode))
-			}
-
-			body, err = ioutil.ReadAll(resp.Body)
-			if err != nil {
-				er(err)
-			}
-			cr := chargeResponse{}
-			if err := json.Unmarshal(body, &cr); err != nil {
-				log.Error().Msgf("error parsing account receiver: %+v", err)
-				er(err)
-			}
-
-			fmt.Fprintf(os.Stderr, "\r %s Resolving charging information [%d/%d]", s.Next(), counter, totalAccounts)
-			for k, v := range cr {
-				ci := &chargeInfo{}
-				if err := mapstructure.Decode(v, ci); err != nil {
-					log.Error().Msgf("error decoding: account:%s value:%s", k, v)
-					continue
-				}
-				// validate input
-				// TODO(labkode): report that the API returns charge type with whitespaces at the beggining.
-				ci.Type = strings.TrimSpace(ci.Type)
-				ci.ChargeGroup = strings.TrimSpace(ci.ChargeGroup)
-				log.Info().Msgf("charge info for account: %s %+v", k, ci)
-
-				mux.Lock()
-				charges[k] = ci
-				mux.Unlock()
-			}
-
-		}(accounts, &wg, throttle)
-	}
-	wg.Wait()
 	return charges
 }
 
