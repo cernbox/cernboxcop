@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -28,6 +30,8 @@ func init() {
 	shareListCmd.Flags().BoolP("status", "", false, "shows the status when it is resolving EOS paths")
 
 	shareTransferCmd.Flags().BoolP("yes", "y", false, "confirms transfership of ownership without confirmation")
+
+	rand.Seed(time.Now().UnixNano())
 }
 
 var shareCmd = &cobra.Command{
@@ -313,9 +317,10 @@ func (s *dbShare) GetPath() string {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		// i'll retry
 		// TODO: limit number of retries
+		<-time.After(time.Duration(rand.Intn(100)) * time.Millisecond)
 		return s.GetPath()
 	}
 
