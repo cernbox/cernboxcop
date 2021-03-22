@@ -23,7 +23,6 @@ func init() {
 	shareListCmd.Flags().StringP("token", "t", "", "filter by public link token")
 	shareListCmd.Flags().StringP("share-with", "s", "", "filter by share with (username or egroup)")
 	shareListCmd.Flags().StringP("path", "p", "", "filter by eos path")
-	shareListCmd.Flags().BoolP("all", "a", false, "shows all shares")
 	shareListCmd.Flags().BoolP("printpath", "", false, "print EOS path, it can be expensive depending on number of shares")
 	shareListCmd.Flags().IntP("concurrency", "", 100, "use up to <n> concurrent connections to resolve paths")
 	shareListCmd.Flags().BoolP("status", "", false, "shows the status when it is resolving EOS paths")
@@ -120,6 +119,16 @@ var shareTransferCmd = &cobra.Command{
 var shareListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all the shares",
+	Args: func(cmd *cobra.Command, args []string) error {
+		status, _ := cmd.Flags().GetBool("status")
+		printpath, _ := cmd.Flags().GetBool("printpath")
+
+		if !printpath && status {
+			return fmt.Errorf("status available only with printpath option")
+		}
+
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		printpath, _ := cmd.Flags().GetBool("printpath")
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
@@ -133,6 +142,7 @@ var shareListCmd = &cobra.Command{
 				er(err)
 			}
 			print(shares, printpath, concurrency, status)
+			os.Exit(0)
 		}
 
 		id, _ := cmd.Flags().GetString("id")
@@ -143,6 +153,7 @@ var shareListCmd = &cobra.Command{
 				er(err)
 			}
 			print(shares, printpath, concurrency, status)
+			os.Exit(0)
 		}
 
 		with, _ := cmd.Flags().GetString("share-with")
@@ -153,6 +164,7 @@ var shareListCmd = &cobra.Command{
 				er(err)
 			}
 			print(shares, printpath, concurrency, status)
+			os.Exit(0)
 		}
 
 		token, _ := cmd.Flags().GetString("token")
@@ -163,16 +175,16 @@ var shareListCmd = &cobra.Command{
 				er(err)
 			}
 			print(shares, printpath, concurrency, status)
+			os.Exit(0)
 		}
 
-		all, _ := cmd.Flags().GetBool("all")
-		if all {
-			shares, err := getAllShares()
-			if err != nil {
-				er(err)
-			}
-			print(shares, printpath, concurrency, status)
+		// with no option -> print all shares
+		shares, err := getAllShares()
+		if err != nil {
+			er(err)
 		}
+		print(shares, printpath, concurrency, status)
+		os.Exit(0)
 
 	},
 }
