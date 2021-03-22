@@ -189,7 +189,7 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	limit := make(chan struct{}, concurrency) // used to limit the number of concurrent goroutines
 	c := make(chan []string)                  // collect generated rows
 
-	spin := NewSpinStatus("Resolving EOS paths", len(shares))
+	spin := NewDeterminatedSpinStatus("Resolving EOS paths", len(shares))
 
 	if status {
 		spin.Start()
