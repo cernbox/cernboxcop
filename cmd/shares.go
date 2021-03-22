@@ -8,10 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tj/go-spin"
 )
 
 func init() {
@@ -179,10 +177,6 @@ var shareListCmd = &cobra.Command{
 	},
 }
 
-func updateStatus(s *spin.Spinner, i, l int) {
-	fmt.Fprintf(os.Stderr, "\r %s Resolving EOS paths [%d/%d]", s.Current(), i, l)
-}
-
 func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	cols := []string{"ID", "FILEID", "OWNER", "TYPE", "SHARE_WITH", "PERMISSION", "URL", "PATH"}
 	rows := [][]string{}
@@ -194,17 +188,11 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	var wg sync.WaitGroup
 	limit := make(chan struct{}, concurrency) // used to limit the number of concurrent goroutines
 	c := make(chan []string)                  // collect generated rows
-	nShares := len(shares)
-	nPaths := 0
-	s := spin.New()
+
+	spin := NewSpinStatus("Resolving EOS paths", len(shares))
 
 	if status {
-		go func() {
-			for range time.Tick(100 * time.Millisecond) {
-				s.Next()
-				updateStatus(s, nPaths, nShares)
-			}
-		}()
+		spin.Start()
 	}
 
 	// get new row and append to rows list
@@ -212,8 +200,7 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 		for row := range c {
 			rows = append(rows, row)
 			if status {
-				nPaths++
-				updateStatus(s, nPaths, nShares)
+				spin.Update(1)
 			}
 			wg.Done()
 		}
@@ -234,6 +221,9 @@ func print(shares []*dbShare, printpath bool, concurrency int, status bool) {
 	}
 
 	wg.Wait()
+	if status {
+		spin.Done()
+	}
 	close(c)
 	pretty(cols, rows)
 
