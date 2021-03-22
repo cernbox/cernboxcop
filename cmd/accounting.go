@@ -21,7 +21,6 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tj/go-spin"
 	"gopkg.in/ldap.v3"
 )
 
@@ -582,15 +581,15 @@ var getUserInfos = func(lc *ldap.Conn, infos []*projectInfo, concurrency int) ma
 	var throttle = make(chan int, concurrency)
 	var wg sync.WaitGroup
 
-	s := spin.New()
+	spin := NewDeterminatedSpinStatus("Getting account info", len(infos))
 	m := make(map[uint64]*userInfo, len(infos))
-	l := len(infos)
 	mux := sync.Mutex{}
-	for i, p := range infos {
+	spin.Start()
+	for _, p := range infos {
 		throttle <- 1 // whatever number
 		wg.Add(1)
 
-		go func(i int, s *spin.Spinner, p *projectInfo, wg *sync.WaitGroup, throttle chan int) {
+		go func(p *projectInfo, wg *sync.WaitGroup, throttle chan int) {
 			defer wg.Done()
 			defer func() {
 				<-throttle
@@ -600,11 +599,11 @@ var getUserInfos = func(lc *ldap.Conn, infos []*projectInfo, concurrency int) ma
 			mux.Lock()
 			defer mux.Unlock()
 			m[p.FileInfo.UID] = ui
-			fmt.Fprintf(os.Stderr, "\r %s Getting account info [%d/%d]", s.Next(), i, l)
-		}(i, s, p, &wg, throttle)
+			spin.Update(1)
+		}(p, &wg, throttle)
 	}
-	fmt.Fprintln(os.Stderr)
 	wg.Wait()
+	spin.Done()
 	return m
 }
 
@@ -622,13 +621,13 @@ var getUserInfo = func(lc *ldap.Conn, uid uint64) *userInfo {
 
 var getInstances = func(infos []*projectInfo) []string {
 	uniq := map[string]interface{}{}
-	s := spin.New()
+	spin := NewDescriptionSpinStatus("Getting EOS instances names")
+	spin.Start()
 	for _, info := range infos {
 		uniq[info.FileInfo.Instance] = nil
-		fmt.Fprintf(os.Stderr, "\r %s Getting EOS instances names: %s", s.Next(), info.FileInfo.Instance)
+		spin.UpdateDescription(info.FileInfo.Instance)
 	}
-	fmt.Fprintln(os.Stderr)
-
+	spin.Done()
 	instances := make([]string, 0, len(infos))
 	for k := range uniq {
 		instances = append(instances, k)
@@ -637,8 +636,12 @@ var getInstances = func(infos []*projectInfo) []string {
 
 }
 
-var getCharging = func(infos []*projectInfo) (charges map[string]*chargeInfo) {
+var getCharging = func(infos []*projectInfo) map[string]*chargeInfo {
+	charges := make(map[string]*chargeInfo)
 	url := "https://gar.cern.ch/public/user_resolver/list_all"
+
+	spin := NewIndeterminatedSpinStatus("Getting accounts")
+	spin.Start()
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -657,7 +660,11 @@ var getCharging = func(infos []*projectInfo) (charges map[string]*chargeInfo) {
 		er(err)
 	}
 
-	// fmt.Fprintf(os.Stderr, "\r %s Resolving charging information [%d/%d]", s.Next(), counter, totalAccounts)
+	spin.Done()
+
+	spin = NewDeterminatedSpinStatus("Resolving charging information", len(cr))
+	spin.Start()
+
 	for k, v := range cr {
 
 		ci := &chargeInfo{}
@@ -670,8 +677,10 @@ var getCharging = func(infos []*projectInfo) (charges map[string]*chargeInfo) {
 		ci.Type = strings.TrimSpace(ci.Type)
 		ci.ChargeGroup = strings.TrimSpace(ci.ChargeGroup)
 		charges[k] = ci
+		spin.Update(1)
 	}
 
+	spin.Done()
 	return charges
 }
 
@@ -682,42 +691,47 @@ type chargeJSON struct {
 type chargeResponse map[string]interface{}
 
 var fillCharging = func(infos []*projectInfo, charges map[string]*chargeInfo) {
-	s := spin.New()
-	count := len(infos)
-	for i, info := range infos {
+	spin := NewDeterminatedSpinStatus("Filling charge info", len(infos))
+	spin.Start()
+
+	for _, info := range infos {
 		if v, ok := charges[info.userInfo.Account]; ok {
 			info.chargeInfo = *v
 		}
 
-		fmt.Fprintf(os.Stderr, "\r %s Filling charge info [%d/%d]", s.Next(), i, count)
+		spin.Update(1)
 	}
 
+	spin.Done()
 	return
 }
 
 var fillQuotas = func(infos []*projectInfo, quotas map[string]*eosclient.QuotaInfo) {
-	s := spin.New()
-	count := len(infos)
-	for i, p := range infos {
+	spin := NewDeterminatedSpinStatus("Computing quota", len(infos))
+	spin.Start()
+
+	for _, p := range infos {
 		if p.userInfo.Account != "" {
 			k := p.userInfo.Account + p.FileInfo.Instance
 			if v, ok := quotas[k]; ok {
 				p.QuotaInfo = v
 			}
 		}
-		fmt.Fprintf(os.Stderr, "\r %s Computing quota [%d/%d]", s.Next(), i, count)
+		spin.Update(1)
 	}
+	spin.Done()
 	return
 }
 
 var fillUserInfos = func(infos []*projectInfo, uis map[uint64]*userInfo) {
-	s := spin.New()
-	count := len(infos)
-	for i, p := range infos {
+	spin := NewDeterminatedSpinStatus("Filling user info", len(infos))
+	spin.Start()
+
+	for _, p := range infos {
 		p.userInfo = uis[p.FileInfo.UID]
-		fmt.Fprintf(os.Stderr, "\r %s Filling user info [%d/%d]", s.Next(), i, count)
+		spin.Update(1)
 	}
-	fmt.Fprintln(os.Stderr)
+	spin.Done()
 	return
 }
 
@@ -734,10 +748,12 @@ var getEOSUsers = func(limit int) (infos []*projectInfo) {
 	ctx := getCtx()
 	var mds []*eosclient.FileInfo
 	letters := "abcdefghijklmnopqrstuvwxyz"
-	s := spin.New()
+	spin := NewDescriptionSpinStatus("Getting users")
+	spin.Start()
+
 	for i := 0; i < len(letters); i++ {
 		letter := string(letters[i])
-		fmt.Fprintf(os.Stderr, "\r %s Getting users [%s]", s.Next(), letter)
+		spin.UpdateDescription(fmt.Sprintf("[%s]", letter))
 		host := fmt.Sprintf("root://eoshome-%s.cern.ch", letter)
 		client := getEOS(host)
 		ctx, _ := context.WithTimeout(ctx, time.Second*30)
@@ -747,7 +763,7 @@ var getEOSUsers = func(limit int) (infos []*projectInfo) {
 		}
 		mds = append(mds, m...)
 	}
-	fmt.Fprintln(os.Stderr)
+	spin.Done()
 
 	if limit == -1 {
 		limit = len(mds)
@@ -773,10 +789,11 @@ var getEOSProjects = func(limit int) (infos []*projectInfo) {
 	ctx := getCtx()
 	var mds []*eosclient.FileInfo
 	letters := "abcdefghijklmnopqrstuvwxyz"
-	s := spin.New()
+	spin := NewDescriptionSpinStatus("Getting project names")
+	spin.Start()
 	for i := 0; i < len(letters); i++ {
 		letter := string(letters[i])
-		fmt.Fprintf(os.Stderr, "\r %s Getting project names [%s]", s.Next(), letter)
+		spin.UpdateDescription(fmt.Sprintf("[%s]", letter))
 		host := fmt.Sprintf("root://eosproject-%s.cern.ch", letter)
 		client := getEOS(host)
 		ctx, _ := context.WithTimeout(ctx, time.Second*30)
@@ -786,7 +803,7 @@ var getEOSProjects = func(limit int) (infos []*projectInfo) {
 		}
 		mds = append(mds, m...)
 	}
-	fmt.Fprintln(os.Stderr)
+	spin.Done()
 
 	if limit == -1 {
 		limit = len(mds)
@@ -833,9 +850,10 @@ type chargeInfoSchema map[string]*chargeInfo
 
 func getQuotas(mgms ...string) map[string]*eosclient.QuotaInfo {
 	quotas := map[string]*eosclient.QuotaInfo{}
-	s := spin.New()
+	spin := NewDescriptionSpinStatus("Getting quota for instance")
+	spin.Start()
 	for _, mgm := range mgms {
-		fmt.Fprintf(os.Stderr, "\r %s Getting quota for instance: %s", s.Next(), mgm)
+		spin.UpdateDescription(mgm)
 		ctx, _ := context.WithTimeout(getCtx(), time.Second*60)
 		eos := getEOS(mgm)
 		prefix := "/eos/project/"
@@ -851,6 +869,7 @@ func getQuotas(mgms ...string) map[string]*eosclient.QuotaInfo {
 			quotas[k] = v
 		}
 	}
+	spin.Done()
 	return quotas
 }
 
