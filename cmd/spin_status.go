@@ -53,12 +53,12 @@ func (s *SpinStatus) getDescription() string {
 	}
 }
 
-func (s *SpinStatus) printStatus(status string) {
-	fmt.Fprintf(os.Stderr, "\033[2K\r %s %s %s", status, s.info, s.getDescription())
+func (s *SpinStatus) printStatus(status, end string) {
+	fmt.Fprintf(os.Stderr, "\033[2K\r %s %s %s%s", status, s.info, s.getDescription(), end)
 }
 
 func (s *SpinStatus) refresh() {
-	s.printStatus(s.spin.Current())
+	s.printStatus(s.spin.Current(), "")
 }
 
 func (s *SpinStatus) Start() {
@@ -76,7 +76,7 @@ func (s *SpinStatus) Start() {
 
 func (s *SpinStatus) Done() {
 	s.ticker.Stop()
-	s.printStatus("\033[32m✓\033[0m")
+	s.printStatus("\033[32m✓\033[0m", "\n")
 }
 
 func (s *SpinStatus) Update(delta int) {
