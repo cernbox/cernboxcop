@@ -58,8 +58,8 @@ func (s *SpinStatus) print() {
 }
 
 func (s *SpinStatus) Start() {
+	s.ticker = time.NewTicker(100 * time.Millisecond)
 	go func() {
-		s.ticker = time.NewTicker(100 * time.Millisecond)
 		for range s.ticker.C {
 			s.spin.Next()
 			s.mu.Lock()
