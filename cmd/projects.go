@@ -169,8 +169,13 @@ var projectListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		owner, _ := cmd.Flags().GetString("owner")
 		printpath, _ := cmd.Flags().GetBool("printpath")
-
-		projects := getProjects(ByOwner(owner))
+		
+		var projects []*projectSpace
+		if owner == "" {
+			projects = getProjects(All{})
+		} else {
+			projects = getProjects(ByOwner(owner))	
+		}
 		printProjectSpaces(projects, printpath)
 	},
 }
