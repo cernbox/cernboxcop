@@ -4,7 +4,7 @@
 
 Name: cernboxcop
 Summary: CERNBox cop helps the ops team to be more efficient
-Version: 1.0.12
+Version: 1.0.13
 Release: 1%{?dist}
 License: AGPLv3
 BuildRoot: %{_tmppath}/%{name}-buildroot
@@ -51,6 +51,10 @@ rm -rf %buildroot/
 
 
 %changelog
+* Tue Mar 23 2021 Gianmaria Del Monte <gianmaria.del.monte@cern.ch> 1.0.13
+- Add orphan command to list project in CERNBox DB but not in EOS
+- Improve path resolve of shares
+- Change in accounting resolver according to new APIs
 * Mon Mar 15 2021 Hugo Gonzalez Labrador <hugo.gonzalez.labrador@cern.ch> 1.0.12
 - Add option to stat EOS paths when listing project spaces
 - Change in accounting group resolver
